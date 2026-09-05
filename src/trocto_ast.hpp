@@ -107,6 +107,7 @@ struct StateFieldDecl {
     ValueType map_key_type = ValueType::Address;
     ValueType map_value_type = ValueType::U64;
     bool is_map = false;
+    bool is_address = false;    // true when the field is declared as address
     unsigned line = 0;
 };
 

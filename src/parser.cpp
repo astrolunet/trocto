@@ -179,6 +179,9 @@ private:
             expect_punct(":");
             if (accept_keyword("u64")) {
                 contract.state.push_back(std::move(field));
+            } else if (accept_keyword("address")) {
+                field.is_address = true;
+                contract.state.push_back(std::move(field));
             } else if (peek_is("map")) {
                 advance();  // map
                 expect_punct("<");

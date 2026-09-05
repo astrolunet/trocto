@@ -36,6 +36,7 @@ public:
                 map_value_types_[field.name] = field.map_value_type;
             } else {
                 scalar_fields_.insert(field.name);
+                if (field.is_address) address_fields_.insert(field.name);
             }
         }
         // v0.3: Build enum value map
@@ -391,6 +392,8 @@ private:
             return it != scope.variables.end() &&
                    it->second.type == ValueType::Address;
         }
+        case ExprKind::StateField:
+            return address_fields_.count(expr.name) > 0;
         case ExprKind::CallSender:
         case ExprKind::CallSelf:
             return true;
@@ -1476,6 +1479,7 @@ private:
     std::map<std::string, ValueType> map_key_types_;
     std::map<std::string, ValueType> map_value_types_;
     std::set<std::string> scalar_fields_;
+    std::set<std::string> address_fields_;
     std::set<std::string> public_names_;
     std::set<std::string> internal_names_;
     uint16_t label_counter_ = 0;
