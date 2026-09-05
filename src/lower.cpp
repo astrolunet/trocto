@@ -1331,7 +1331,7 @@ private:
     // v0.3: Compile only_owner access control check.
     // Reads the 'owner' scalar state field and requires sender == owner.
     void compile_only_owner_check(FunctionIR& fn, const FunctionDecl& decl,
-                                  Scope& scope) {
+                                  Scope& /*scope*/) {
         // Load sender address
         push(fn, kSenderSlot, decl.line);
         push_host(fn, Host::Sender, decl.line);
