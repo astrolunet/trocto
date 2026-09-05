@@ -11,9 +11,9 @@ add_executable(trocto
     src/parser.cpp
     src/lower.cpp
     src/trocto.cpp
-    src/main.cpp
+    apps/trocto/main.cpp
 )
 
-target_include_directories(trocto PRIVATE include)
+target_include_directories(trocto PRIVATE include src)
 
 install(TARGETS trocto RUNTIME DESTINATION bin)
