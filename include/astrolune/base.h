@@ -13,7 +13,10 @@ using al_size = size_t;
 using al_status = int;
 #define AL_OK 0
 
-struct al_hash256 { al_u8 data[32]{}; };
+struct al_hash256 {
+    al_u8 data[32]{};
+    al_u8 bytes[32]{};  // alias used by some code
+};
 struct al_address { al_u8 data[32]{}; };
 
 inline const char* al_status_str(al_status) { return "error"; }
