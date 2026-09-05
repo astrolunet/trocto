@@ -12,6 +12,8 @@
 #include "lexer.hpp"
 #include "trocto_ast.hpp"
 
+#include <map>
+
 namespace trocto {
 namespace {
 
