@@ -229,6 +229,35 @@ private:
         push_host(fn, Host::StorageSet, line);
     }
 
+    uint32_t read_state_field_address(FunctionIR& fn,
+                                      const std::string& field,
+                                      unsigned line) {
+        for (unsigned word = 0; word < 4; ++word) {
+            push(fn, 0, line);
+            push(fn, kScratchB + word * 8, line);
+            emit(fn, Opcode::Store64, line);
+        }
+        load_state_key(fn, field, line, kScratchA);
+        push(fn, kScratchA, line);
+        push(fn, 32, line);
+        push(fn, kScratchB, line);
+        push(fn, 32, line);
+        push_host(fn, Host::StorageGet, line);
+        emit(fn, Opcode::Drop, line);
+        return kScratchB;
+    }
+
+    void write_state_field_address(FunctionIR& fn,
+                                   const std::string& field,
+                                   uint32_t source_slot, unsigned line) {
+        load_state_key(fn, field, line, kScratchA);
+        push(fn, kScratchA, line);
+        push(fn, 32, line);
+        push(fn, source_slot, line);
+        push(fn, 32, line);
+        push_host(fn, Host::StorageSet, line);
+    }
+
     // --- maps -----------------------------------------------------------------------
     //
     // A map entry's storage key is derived on chain:
@@ -311,37 +340,53 @@ private:
         push_host(fn, Host::HashTagged, line);
     }
 
-    void compile_map_read(FunctionIR& fn, const Expr& expr,
-                          const Scope& scope) {
-        if (!map_prefix_.count(expr.name)) {
-            error(expr.line, "unknown map '" + expr.name + "'");
-            return;
-        }
+    void build_map_key_for_expr(FunctionIR& fn, const Expr& expr,
+                                const Scope& scope) {
         auto key_it = map_key_types_.find(expr.name);
-        auto val_it = map_value_types_.find(expr.name);
         ValueType key_type = key_it != map_key_types_.end()
                                  ? key_it->second : ValueType::Address;
-        ValueType val_type = val_it != map_value_types_.end()
-                                 ? val_it->second : ValueType::U64;
-
         if (key_type == ValueType::Address) {
-            if (!is_address_expr(*expr.args[0], scope)) {
-                error(expr.line, "map keys must be address-typed");
-                return;
-            }
             uint32_t addr = compile_address(fn, *expr.args[0], scope);
             if (failed_) return;
             build_map_key(fn, expr.name, addr, expr.line);
         } else {
-            // u64 key: materialize as 8 bytes in scratch, then hash
             compile_u64(fn, *expr.args[0], scope);
             if (failed_) return;
             push(fn, kScratchB, expr.line);
             emit(fn, Opcode::Store64, expr.line);
             build_map_key_u64(fn, expr.name, expr.line);
         }
+    }
 
-        /* Absent entries read as zero. */
+    uint32_t compile_map_read_address(FunctionIR& fn, const Expr& expr,
+                                      const Scope& scope) {
+        build_map_key_for_expr(fn, expr, scope);
+        if (failed_) return 0u;
+        for (unsigned word = 0; word < 4; ++word) {
+            push(fn, 0u, expr.line);
+            push(fn, kScratchB + word * 8u, expr.line);
+            emit(fn, Opcode::Store64, expr.line);
+        }
+        push(fn, kKeySlot, expr.line);
+        push(fn, 32u, expr.line);
+        push(fn, kScratchB, expr.line);
+        push(fn, 32u, expr.line);
+        push_host(fn, Host::StorageGet, expr.line);
+        emit(fn, Opcode::Drop, expr.line);
+        return kScratchB;
+    }
+
+    void compile_map_read(FunctionIR& fn, const Expr& expr,
+                          const Scope& scope) {
+        build_map_key_for_expr(fn, expr, scope);
+        if (failed_) return;
+        auto val_it = map_value_types_.find(expr.name);
+        ValueType val_type = val_it != map_value_types_.end()
+                                 ? val_it->second : ValueType::U64;
+        if (val_type == ValueType::Address) {
+            error(expr.line, "address-valued map reads must use an address context");
+            return;
+        }
         push(fn, 0u, expr.line);
         push(fn, kScratchB, expr.line);
         emit(fn, Opcode::Store64, expr.line);
@@ -351,28 +396,31 @@ private:
         push(fn, 32u, expr.line);
         push_host(fn, Host::StorageGet, expr.line);
         emit(fn, Opcode::Drop, expr.line);
-
-        if (val_type == ValueType::Address) {
-            // Return the slot offset for address values (32 bytes at kScratchB)
-            // Address map reads return the materialized 32-byte slot
-            error(expr.line, "address-valued map reads not yet supported");
-            return;
-        }
         push(fn, kScratchB, expr.line);
         emit(fn, Opcode::Load64, expr.line);
     }
 
     /* Stack-top u64 value goes into the map whose key is ALREADY derived
      * in kKeySlot. The value is staged into kScratchB here, so callers must
-     * run build_map_key BEFORE staging — key derivation clobbers the
+     * run build_map_key BEFORE staging вЂ” key derivation clobbers the
      * scratch region where the staged value would otherwise sit. */
-    void write_map_entry_at_key(FunctionIR& fn, unsigned line) {
-        push(fn, kScratchB, line);
-        emit(fn, Opcode::Store64, line);
+   void write_map_entry_at_key(FunctionIR& fn, unsigned line) {
+       push(fn, kScratchB, line);
+       emit(fn, Opcode::Store64, line);
+       push(fn, kKeySlot, line);
+       push(fn, 32u, line);
+       push(fn, kScratchB, line);
+       push(fn, 8u, line);
+       push_host(fn, Host::StorageSet, line);
+   }
+
+    void write_map_entry_address_at_key(FunctionIR& fn,
+                                        uint32_t source_slot,
+                                        unsigned line) {
         push(fn, kKeySlot, line);
         push(fn, 32u, line);
-        push(fn, kScratchB, line);
-        push(fn, 8u, line);
+        push(fn, source_slot, line);
+        push(fn, 32u, line);
         push_host(fn, Host::StorageSet, line);
     }
 
@@ -394,10 +442,15 @@ private:
         }
         case ExprKind::StateField:
             return address_fields_.count(expr.name) > 0;
-        case ExprKind::CallSender:
-        case ExprKind::CallSelf:
-            return true;
-        default:
+       case ExprKind::CallSender:
+       case ExprKind::CallSelf:
+           return true;
+        case ExprKind::MapRead: {
+            auto it = map_value_types_.find(expr.name);
+            return it != map_value_types_.end() &&
+                   it->second == ValueType::Address;
+        }
+       default:
             return false;
         }
     }
@@ -451,11 +504,13 @@ private:
             push(fn, kSenderSlot, expr.line);
             push_host(fn, Host::Sender, expr.line);
             return kSenderSlot;
-        case ExprKind::CallSelf:
-            push(fn, kSelfSlot, expr.line);
-            push_host(fn, Host::CurrentAddress, expr.line);
-            return kSelfSlot;
-        default:
+       case ExprKind::CallSelf:
+           push(fn, kSelfSlot, expr.line);
+           push_host(fn, Host::CurrentAddress, expr.line);
+           return kSelfSlot;
+        case ExprKind::MapRead:
+            return compile_map_read_address(fn, expr, scope);
+       default:
             error(expr.line,
                   "expression does not produce an address");
             return 0u;
@@ -876,6 +931,20 @@ private:
         }
 
         case StmtKind::AssignField: {
+            if (address_fields_.count(stmt.name)) {
+                if (stmt.op != "=") {
+                    error(stmt.line,
+                          "compound assignment is not supported for address "
+                          "state fields");
+                    return;
+                }
+                uint32_t source_slot =
+                    compile_address(fn, *stmt.expr, scope);
+                if (failed_) return;
+                write_state_field_address(
+                    fn, stmt.name, source_slot, stmt.line);
+                return;
+            }
             if (!scalar_fields_.count(stmt.name)) {
                 error(stmt.line,
                       "unknown scalar state field '" + stmt.name + "'");
@@ -915,7 +984,17 @@ private:
             }
             if (failed_) return;
 
-            if (stmt.op == "=") {
+           if (stmt.op == "=") {
+                auto val_it = map_value_types_.find(stmt.name);
+                if (val_it != map_value_types_.end() &&
+                    val_it->second == ValueType::Address) {
+                    uint32_t source_slot =
+                        compile_address(fn, *stmt.expr, scope);
+                    if (failed_) return;
+                    write_map_entry_address_at_key(
+                        fn, source_slot, stmt.line);
+                    return;
+                }
                 compile_u64(fn, *stmt.expr, scope);
                 if (failed_) return;
                 write_map_entry_at_key(fn, stmt.line);
@@ -993,13 +1072,17 @@ private:
             normalize_bool(fn, stmt.line);
             push(fn, 0, stmt.line);
             emit(fn, Opcode::Eq, stmt.line);
-            jump_if(fn, otherwise.c_str(), stmt.line);
+            const char* false_target =
+                stmt.else_body.empty() ? end.c_str() : otherwise.c_str();
+            jump_if(fn, false_target, stmt.line);
             compile_block(fn, stmt.body, scope);
             if (failed_) return;
-            jump(fn, end.c_str(), stmt.line);
-            set_label(otherwise, stmt.line);
-            compile_block(fn, stmt.else_body, scope);
-            if (failed_) return;
+            if (!stmt.else_body.empty()) {
+                jump(fn, end.c_str(), stmt.line);
+                set_label(otherwise, stmt.line);
+                compile_block(fn, stmt.else_body, scope);
+                if (failed_) return;
+            }
             set_label(end, stmt.line);
             return;
         }
@@ -1252,16 +1335,32 @@ private:
             push(fn, kScratchA + word * 8, stmt.line);
             emit(fn, Opcode::Store64, stmt.line);
         }
+        uint32_t payload_offset = 0u;
         for (size_t i = 0; i < stmt.emit_args.size(); ++i) {
-            compile_expr(fn, *stmt.emit_args[i], scope);
-            if (failed_) return;
-            push(fn, kScratchB + static_cast<uint32_t>(i) * 8, stmt.line);
-            emit(fn, Opcode::Store64, stmt.line);
+            if (is_address_expr(*stmt.emit_args[i], scope)) {
+                uint32_t source_slot =
+                    compile_address(fn, *stmt.emit_args[i], scope);
+                if (failed_) return;
+                for (unsigned word = 0; word < 4; ++word) {
+                    push(fn, source_slot + word * 8u, stmt.line);
+                    emit(fn, Opcode::Load64, stmt.line);
+                    push(fn, kScratchB + payload_offset + word * 8u,
+                         stmt.line);
+                    emit(fn, Opcode::Store64, stmt.line);
+                }
+                payload_offset += 32u;
+            } else {
+                compile_expr(fn, *stmt.emit_args[i], scope);
+                if (failed_) return;
+                push(fn, kScratchB + payload_offset, stmt.line);
+                emit(fn, Opcode::Store64, stmt.line);
+                payload_offset += 8u;
+            }
         }
         push(fn, kScratchA, stmt.line);
         push(fn, 32, stmt.line);
         push(fn, kScratchB, stmt.line);
-        push(fn, stmt.emit_args.size() * 8, stmt.line);
+        push(fn, payload_offset, stmt.line);
         push_host(fn, Host::EmitEvent, stmt.line);
     }
 
@@ -1340,12 +1439,12 @@ private:
         push_host(fn, Host::Sender, decl.line);
 
         // Load owner from state (scalar field named "owner")
-        if (!scalar_fields_.count("owner")) {
+        if (!address_fields_.count("owner")) {
             error(decl.line,
                   "only_owner requires 'owner' state field");
             return;
         }
-        read_state_field(fn, "owner", decl.line);
+        uint32_t owner_slot = read_state_field_address(fn, "owner", decl.line);
 
         // Compare: sender == owner?
         // Both are 32-byte addresses at different slots. Compare word by word.
@@ -1353,53 +1452,21 @@ private:
         for (unsigned w = 0; w < 4; ++w) {
             push(fn, kSenderSlot + w * 8, decl.line);
             emit(fn, Opcode::Load64, decl.line);
-            push(fn, kScratchA + w * 8, decl.line);
-            emit(fn, Opcode::Store64, decl.line);
-        }
-        // Load owner into scratchB for comparison
-        for (unsigned w = 0; w < 4; ++w) {
-            push(fn, kScratchA + w * 8, decl.line);
-            emit(fn, Opcode::Load64, decl.line);
-            push(fn, kScratchB + w * 8, decl.line);
-            emit(fn, Opcode::Store64, decl.line);
-        }
-        // Compare all 4 words
-        for (unsigned w = 0; w < 4; ++w) {
-            push(fn, kScratchA + w * 8, decl.line);
-            emit(fn, Opcode::Load64, decl.line);
-            push(fn, kScratchB + w * 8, decl.line);
+            push(fn, owner_slot + w * 8, decl.line);
             emit(fn, Opcode::Load64, decl.line);
             emit(fn, Opcode::Eq, decl.line);
-            if (w < 3) {
-                // If any word doesn't match, fail
-                std::string word_ok = fresh_label("oword");
-                push(fn, 0, decl.line);
-                emit(fn, Opcode::Eq, decl.line);
-                jump_if(fn, word_ok.c_str(), decl.line);
-                // Word mismatch -> revert with code 100 (owner only)
-                push(fn, 100, decl.line);
-                push(fn, kScratchB, decl.line);
-                emit(fn, Opcode::Store64, decl.line);
-                push(fn, kScratchB, decl.line);
-                push(fn, 8, decl.line);
-                emit(fn, Opcode::Revert, decl.line);
-                set_label(word_ok, decl.line);
+            if (w > 0) {
+                emit(fn, Opcode::And, decl.line);
             }
         }
-        // All words matched -> continue
-        // Final check: the last comparison result should be 1
-        std::string final_ok = fresh_label("ofinal");
-        push(fn, 0, decl.line);
-        emit(fn, Opcode::Eq, decl.line);
-        jump_if(fn, final_ok.c_str(), decl.line);
-        // Not owner -> revert
+        jump_if(fn, ok.c_str(), decl.line);
         push(fn, 100, decl.line);
         push(fn, kScratchB, decl.line);
         emit(fn, Opcode::Store64, decl.line);
         push(fn, kScratchB, decl.line);
         push(fn, 8, decl.line);
         emit(fn, Opcode::Revert, decl.line);
-        set_label(final_ok, decl.line);
+        set_label(ok, decl.line);
     }
 
     void compile_pub_prologue(FunctionIR& fn, const FunctionDecl& decl,
