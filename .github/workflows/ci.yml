@@ -16,12 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure (Linux)
-        if: runner.os == 'Linux'
-        run: cmake --preset dev
-
-      - name: Configure (Windows)
-        if: runner.os == 'Windows'
+      - name: Configure
         run: cmake --preset dev
 
       - name: Build
@@ -32,7 +27,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: trocto-${{ matrix.os }}
-          path: build/dev/tools/trocto*
+          path: build/dev/trocto*
 
   release:
     needs: build
