@@ -508,6 +508,13 @@ private:
            push(fn, kSelfSlot, expr.line);
            push_host(fn, Host::CurrentAddress, expr.line);
            return kSelfSlot;
+        case ExprKind::StateField:
+            if (address_fields_.count(expr.name) == 0) {
+                error(expr.line,
+                      "state field '" + expr.name + "' is not an address");
+                return 0u;
+            }
+            return read_state_field_address(fn, expr.name, expr.line);
         case ExprKind::MapRead:
             return compile_map_read_address(fn, expr, scope);
        default:
@@ -784,6 +791,46 @@ private:
         if (expr.op == "&&" || expr.op == "||") {
             compile_short_circuit(fn, expr, scope);
             return;
+        }
+
+        if (expr.op == "==" || expr.op == "!=") {
+            const bool left_address = is_address_expr(*expr.lhs, scope);
+            const bool right_address = is_address_expr(*expr.args[0], scope);
+            if (left_address || right_address) {
+                if (!left_address || !right_address) {
+                    error(expr.line,
+                          "address equality requires two address operands");
+                    return;
+                }
+                const auto uses_scratch_address = [](ExprKind kind) {
+                    return kind == ExprKind::StateField ||
+                           kind == ExprKind::MapRead;
+                };
+                if (uses_scratch_address(expr.lhs->kind) &&
+                    uses_scratch_address(expr.args[0]->kind)) {
+                    error(expr.line,
+                          "comparing two materialized addresses is not supported");
+                    return;
+                }
+                const uint32_t left = compile_address(fn, *expr.lhs, scope);
+                if (failed_) return;
+                const uint32_t right =
+                    compile_address(fn, *expr.args[0], scope);
+                if (failed_) return;
+                for (uint32_t word = 0; word < 4; ++word) {
+                    push(fn, left + word * 8, expr.line);
+                    emit(fn, Opcode::Load64, expr.line);
+                    push(fn, right + word * 8, expr.line);
+                    emit(fn, Opcode::Load64, expr.line);
+                    emit(fn, Opcode::Eq, expr.line);
+                    if (word != 0) emit(fn, Opcode::And, expr.line);
+                }
+                if (expr.op == "!=") {
+                    push(fn, 0, expr.line);
+                    emit(fn, Opcode::Eq, expr.line);
+                }
+                return;
+            }
         }
 
         Opcode op;

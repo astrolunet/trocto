@@ -7,23 +7,22 @@
 
 #define AL_VM_MAX_CODE_SIZE (1024u * 1024u)
 #define AL_VM_MAX_FUNCTIONS 1024u
+#define AL_VM_CONTAINER_VERSION 1u
+#define AL_VM_ISA_VERSION 1u
 
 struct al_vm_function {
     uint32_t offset;
     uint16_t parameter_count;
     uint16_t result_count;
     uint16_t max_stack;
+    uint16_t reserved;
 };
 
-inline al_status al_vm_container_encode(
-    const al_vm_function* /*funcs*/, size_t /*count*/,
-    al_bytes /*code*/, al_bytes_mut /*out*/, al_size* /*written*/) {
-    return -1;  // stub
-}
+al_status al_vm_container_encode(const al_vm_function* functions, size_t count,
+                                 al_bytes code, al_bytes_mut out,
+                                 al_size* written);
 
-inline al_status al_vm_validate(al_bytes /*container*/,
-                                 void* /*host_table*/, al_arena* /*arena*/) {
-    return AL_OK;  // stub - always pass for toolchain
-}
+al_status al_vm_validate(al_bytes container, void* host_table,
+                         al_arena* arena);
 
 #endif

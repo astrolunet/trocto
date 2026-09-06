@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(trocto
     src/lexer.cpp
     src/encoder.cpp
+    src/vm_standalone.cpp
     src/regol.cpp
     src/parser.cpp
     src/lower.cpp
