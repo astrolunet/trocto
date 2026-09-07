@@ -190,8 +190,10 @@ private:
                     field.map_key_type = ValueType::Address;
                 } else if (accept_keyword("u64")) {
                     field.map_key_type = ValueType::U64;
+                } else if (accept_keyword("string")) {
+                    field.map_key_type = ValueType::String;
                 } else {
-                    fail("map key types are 'address' or 'u64'");
+                    fail("map key types are 'address', 'u64', or 'string'");
                     return;
                 }
                 expect_punct(",");
@@ -780,6 +782,10 @@ private:
         if (name == "height") kind = ExprKind::CallHeight;
         else if (name == "day") kind = ExprKind::CallDay;
         else if (name == "self_balance") kind = ExprKind::CallSelfBalance;
+        /* caller_balance() returns the sender's GLOBAL chain balance (the
+         * balance on the consensus ledger), NOT the sender's deposit on the
+         * current contract.  For contract-specific balances, use storage
+         * (map<u64,u64> or map<address,u64>) to track deposits explicitly. */
         else if (name == "caller_balance") kind = ExprKind::CallCallerBalance;
         else if (name == "sender") kind = ExprKind::CallSender;
         else if (name == "self") kind = ExprKind::CallSelf;

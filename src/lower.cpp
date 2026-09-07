@@ -340,6 +340,96 @@ private:
         push_host(fn, Host::HashTagged, line);
     }
 
+    // Build a map key from a string value (offset, length) on the stack.
+    void build_map_key_string(FunctionIR& fn, const std::string& map,
+                              unsigned line) {
+        auto pit = map_prefix_.find(map);
+        if (pit == map_prefix_.end()) {
+            error(line, "unknown map '" + map + "'");
+            return;
+        }
+        const std::string& prefix = pit->second;
+        const uint32_t prefix_len = static_cast<uint32_t>(prefix.size());
+        const uint32_t padded = (prefix_len + 7u) / 8u * 8u;
+
+        // Stack has [offset, length] with length on top.
+        // Store64 pops address (top), then value (second).
+        push(fn, kScratchB + 8u, line);
+        emit(fn, Opcode::Store64, line);   // length -> kScratchB+8
+        push(fn, kScratchB, line);
+        emit(fn, Opcode::Store64, line);   // offset -> kScratchB
+
+        // Write prefix words to scratchA.
+        for (uint32_t i = 0u; i < padded; i += 8u) {
+            uint64_t word = 0u;
+            for (uint32_t b = 0u; b < 8u && i + b < prefix.size(); ++b)
+                word |= static_cast<uint64_t>(
+                            static_cast<unsigned char>(prefix[i + b]))
+                        << (b * 8u);
+            push(fn, word, line);
+            push(fn, kScratchA + i, line);
+            emit(fn, Opcode::Store64, line);
+        }
+
+        // Copy string bytes from linear memory to scratchA after prefix.
+        std::string loop_start = fresh_label("strkey_cpy");
+        std::string loop_end = fresh_label("strkey_end");
+
+        // Initialize loop counter i = 0
+        push(fn, 0u, line);
+        push(fn, kScratchB + 16u, line);
+        emit(fn, Opcode::Store64, line);
+
+        set_label(loop_start);
+        // Load i
+        push(fn, kScratchB + 16u, line);
+        emit(fn, Opcode::Load64, line);
+        // Load length
+        push(fn, kScratchB + 8u, line);
+        emit(fn, Opcode::Load64, line);
+        // if i >= length, exit
+        emit(fn, Opcode::Lt, line);
+        push(fn, loop_end, line);
+        emit(fn, Opcode::JumpIf, line);
+
+        // Load byte from source: Load8(offset + i)
+        push(fn, kScratchB, line);
+        emit(fn, Opcode::Load64, line);
+        push(fn, kScratchB + 16u, line);
+        emit(fn, Opcode::Load64, line);
+        emit(fn, Opcode::Add, line);
+        emit(fn, Opcode::Load8, line);
+
+        // Store byte to dest: Store8(kScratchA + prefix_len + i)
+        push(fn, kScratchA + prefix_len, line);
+        push(fn, kScratchB + 16u, line);
+        emit(fn, Opcode::Load64, line);
+        emit(fn, Opcode::Add, line);
+        emit(fn, Opcode::Store8, line);
+
+        // i++
+        push(fn, kScratchB + 16u, line);
+        push(fn, kScratchB + 16u, line);
+        emit(fn, Opcode::Load64, line);
+        push(fn, 1u, line);
+        emit(fn, Opcode::Add, line);
+        emit(fn, Opcode::Store64, line);
+
+        push(fn, loop_start, line);
+        emit(fn, Opcode::Jump, line);
+        set_label(loop_end);
+
+        // Hash: prefix || string_bytes — total length = prefix_len + string_len.
+        push(fn, kScratchA, line);                          /* data     */
+        push(fn, static_cast<uint64_t>(prefix_len), line);  /* prefix_len (compile-time) */
+        push(fn, kScratchB + 8u, line);                     /* &string_len */
+        emit(fn, Opcode::Load64, line);                     /* string_len (runtime) */
+        emit(fn, Opcode::Add, line);                        /* prefix_len + string_len */
+        push(fn, kKeySlot, line);                           /* out      */
+        push(fn, 0u, line);                                 /* tag      */
+        push_host(fn, Host::HashTagged, line);
+    }
+
     void build_map_key_for_expr(FunctionIR& fn, const Expr& expr,
                                 const Scope& scope) {
         auto key_it = map_key_types_.find(expr.name);
@@ -349,6 +439,15 @@ private:
             uint32_t addr = compile_address(fn, *expr.args[0], scope);
             if (failed_) return;
             build_map_key(fn, expr.name, addr, expr.line);
+        } else if (key_type == ValueType::String) {
+            if (!is_string_expr(*expr.args[0], scope)) {
+                error(expr.line,
+                      "string map key requires a string expression");
+                return;
+            }
+            compile_string(fn, *expr.args[0], scope);
+            if (failed_) return;
+            build_map_key_string(fn, expr.name, expr.line);
         } else {
             compile_u64(fn, *expr.args[0], scope);
             if (failed_) return;
@@ -521,6 +620,40 @@ private:
             error(expr.line,
                   "expression does not produce an address");
             return 0u;
+        }
+    }
+
+    // Compile a string expression, pushing (offset, length) onto the stack.
+    void compile_string(FunctionIR& fn, const Expr& expr,
+                        const Scope& scope) {
+        switch (expr.kind) {
+        case ExprKind::StringLiteral: {
+            // Place the string literal into linear memory and push offset+length.
+            uint32_t offset = string_literal_slot_;
+            uint32_t len = static_cast<uint32_t>(expr.string_value.size());
+            string_literal_slot_ += len + 1u;
+            push(fn, offset, expr.line);
+            push(fn, len, expr.line);
+            return;
+        }
+        case ExprKind::Local: {
+            auto it = scope.variables.find(expr.name);
+            if (it == scope.variables.end() ||
+                it->second.type != ValueType::String) {
+                error(expr.line,
+                      "'" + expr.name + "' is not a string variable");
+                return;
+            }
+            // Load the two-part pointer from the variable's slot.
+            push(fn, it->second.offset, expr.line);
+            emit(fn, Opcode::Load64, expr.line);
+            push(fn, it->second.offset + 8u, expr.line);
+            emit(fn, Opcode::Load64, expr.line);
+            return;
+        }
+        default:
+            error(expr.line, "expression does not produce a string");
+            return;
         }
     }
 
@@ -1021,6 +1154,15 @@ private:
                 uint32_t key_addr = compile_address(fn, *stmt.map_key, scope);
                 if (failed_) return;
                 build_map_key(fn, stmt.name, key_addr, stmt.line);
+            } else if (key_type == ValueType::String) {
+                if (!is_string_expr(*stmt.map_key, scope)) {
+                    error(stmt.line,
+                          "string map key requires a string expression");
+                    return;
+                }
+                compile_string(fn, *stmt.map_key, scope);
+                if (failed_) return;
+                build_map_key_string(fn, stmt.name, stmt.line);
             } else {
                 // u64 key
                 compile_u64(fn, *stmt.map_key, scope);
@@ -1241,6 +1383,15 @@ private:
                 uint32_t key_addr = compile_address(fn, *stmt.map_key, scope);
                 if (failed_) return;
                 build_map_key(fn, map_name, key_addr, stmt.line);
+            } else if (key_type == ValueType::String) {
+                if (!is_string_expr(*stmt.map_key, scope)) {
+                    error(stmt.line,
+                          "string map key requires a string expression");
+                    return;
+                }
+                compile_string(fn, *stmt.map_key, scope);
+                if (failed_) return;
+                build_map_key_string(fn, map_name, stmt.line);
             } else {
                 compile_u64(fn, *stmt.map_key, scope);
                 if (failed_) return;
