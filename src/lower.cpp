@@ -380,17 +380,18 @@ private:
         push(fn, kScratchB + 16u, line);
         emit(fn, Opcode::Store64, line);
 
-        set_label(loop_start);
+        set_label(loop_start, line);
         // Load i
         push(fn, kScratchB + 16u, line);
         emit(fn, Opcode::Load64, line);
         // Load length
         push(fn, kScratchB + 8u, line);
         emit(fn, Opcode::Load64, line);
-        // if i >= length, exit
+        // Exit when !(i < length).
         emit(fn, Opcode::Lt, line);
-        push(fn, loop_end, line);
-        emit(fn, Opcode::JumpIf, line);
+        push(fn, 0u, line);
+        emit(fn, Opcode::Eq, line);
+        jump_if(fn, loop_end.c_str(), line);
 
         // Load byte from source: Load8(offset + i)
         push(fn, kScratchB, line);
@@ -415,9 +416,8 @@ private:
         emit(fn, Opcode::Add, line);
         emit(fn, Opcode::Store64, line);
 
-        push(fn, loop_start, line);
-        emit(fn, Opcode::Jump, line);
-        set_label(loop_end);
+        jump(fn, loop_start.c_str(), line);
+        set_label(loop_end, line);
 
         // Hash: prefix || string_bytes — total length = prefix_len + string_len.
         push(fn, kScratchA, line);                          /* data     */
