@@ -96,10 +96,20 @@ std::optional<CompileResult> compile_trocto(const std::string& source,
             linked.params = fn.params;
             linked.has_result = fn.has_result;
             linked.line = fn.line;
-            imp.functions.push_back(linked);
             
             // Also add to contract's function list for compilation.
-            contract->functions.push_back(linked);
+            // Cannot copy (unique_ptr body) so build a second instance.
+            FunctionDecl for_contract;
+            for_contract.public_abi = true;
+            for_contract.is_constructor = fn.is_constructor;
+            for_contract.is_only_owner = fn.is_only_owner;
+            for_contract.name = imp.module_name + "::" + fn.name;
+            for_contract.params = fn.params;
+            for_contract.has_result = fn.has_result;
+            for_contract.line = fn.line;
+            
+            imp.functions.push_back(std::move(linked));
+            contract->functions.push_back(std::move(for_contract));
         }
     }
 
