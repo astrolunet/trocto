@@ -84,11 +84,18 @@ std::optional<CompileResult> compile_trocto(const std::string& source,
         
         // Link public functions from the imported module.
         // Functions are prefixed with module_name:: to allow qualified calls.
+        // We only copy the declaration (name, params, return type), not the body.
         for (const FunctionDecl& fn : imported->functions) {
             if (!fn.public_abi) continue;  // Only link public functions
             
-            FunctionDecl linked = fn;
+            FunctionDecl linked;
+            linked.public_abi = true;
+            linked.is_constructor = fn.is_constructor;
+            linked.is_only_owner = fn.is_only_owner;
             linked.name = imp.module_name + "::" + fn.name;
+            linked.params = fn.params;
+            linked.has_result = fn.has_result;
+            linked.line = fn.line;
             imp.functions.push_back(linked);
             
             // Also add to contract's function list for compilation.
