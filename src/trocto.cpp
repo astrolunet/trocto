@@ -52,12 +52,10 @@ std::optional<CompileResult> compile_trocto(const std::string& source,
     auto contract = parse_contract(source, diagnostics);
     if (!contract) return std::nullopt;
 
-    // Resolve imports: read each imported file and parse it to extract
-    // function declarations that can be called from this contract.
-    // In v0.2, imports are read and validated but not yet linked into
-    // the calling module's function table. This is a placeholder for
-    // the module system that will be completed in v0.3.
-    for (const ImportDecl& imp : contract->imports) {
+    // Resolve imports: read each imported file, parse it, and link
+    // its public function declarations into the importing contract.
+    // Imported functions are prefixed with the module name (filename without extension).
+    for (ImportDecl& imp : contract->imports) {
         std::string resolved = resolve_import_path(source_path, imp.path);
         std::string imported_source;
         if (!read_file(resolved, imported_source)) {
@@ -75,6 +73,26 @@ std::optional<CompileResult> compile_trocto(const std::string& source,
                                       d.message);
             }
             return std::nullopt;
+        }
+        
+        // Extract module name from path (e.g., "utils/math.tc" -> "math")
+        size_t last_sep = imp.path.find_last_of("/\\");
+        size_t last_dot = imp.path.find_last_of('.');
+        if (last_dot == std::string::npos) last_dot = imp.path.size();
+        if (last_sep == std::string::npos) last_sep = 0; else last_sep++;
+        imp.module_name = imp.path.substr(last_sep, last_dot - last_sep);
+        
+        // Link public functions from the imported module.
+        // Functions are prefixed with module_name:: to allow qualified calls.
+        for (const FunctionDecl& fn : imported->functions) {
+            if (!fn.public_abi) continue;  // Only link public functions
+            
+            FunctionDecl linked = fn;
+            linked.name = imp.module_name + "::" + fn.name;
+            imp.functions.push_back(linked);
+            
+            // Also add to contract's function list for compilation.
+            contract->functions.push_back(linked);
         }
     }
 

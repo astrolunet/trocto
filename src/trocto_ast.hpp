@@ -130,6 +130,8 @@ struct FunctionDecl {
 
 struct ImportDecl {
     std::string path;              // relative path to imported file
+    std::string module_name;       // module name (derived from filename)
+    std::vector<FunctionDecl> functions;  // linked function declarations
     unsigned line = 0;
 };
 
